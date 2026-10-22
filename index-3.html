@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Downloader</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#14171c;--mut:#6b7280;--bd:#e3e6ea;--ac:#2563eb;--acx:#fff;--err:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#181b21;--tx:#eceef2;--mut:#98a0ae;--bd:#2a2f38;--ac:#4f8cff;--acx:#0b1020;--err:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:8px 0 4px}
+.sub{color:var(--mut);margin:0 0 16px;font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-top:14px}
+.row{display:flex;gap:8px}
+input,select{flex:1;min-width:0;padding:11px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+button{padding:10px 16px;border:0;border-radius:10px;background:var(--ac);color:var(--acx);font:inherit;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+button.ghost{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+.meta{display:flex;gap:12px}
+.meta img{width:120px;height:68px;object-fit:cover;border-radius:8px;background:var(--bd)}
+.meta b{display:block;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.meta small{color:var(--mut)}
+.tabs{display:flex;gap:6px;margin:14px 0 8px}
+.tabs button{flex:1}
+.tabs button:not(.on){background:transparent;color:var(--tx);border:1px solid var(--bd)}
+.item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--bd)}
+.item:first-child{border-top:0}
+.item span small{color:var(--mut);margin-left:6px}
+.badge{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd);color:var(--mut);margin-left:6px}
+#msg{margin-top:12px;font-size:13px;color:var(--mut)}
+#msg.err{color:var(--err)}
+.note{font-size:12px;color:var(--mut);margin-top:18px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Media Downloader</h1>
+  <p class="sub">YouTube · Facebook · TikTok · Douyin — video, audio và phụ đề</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="url" type="url" placeholder="Dán link video vào đây…" autocomplete="off">
+      <button id="go">Phân tích</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div id="res" class="card" hidden>
+    <div class="meta">
+      <img id="thumb" alt="">
+      <div><b id="title"></b><small id="info"></small></div>
+    </div>
+    <div class="tabs">
+      <button data-t="video" class="on">Video</button>
+      <button data-t="audio">Audio</button>
+      <button data-t="sub">Phụ đề</button>
+    </div>
+    <div id="list"></div>
+  </div>
+
+  <p class="note">Chỉ tải nội dung của bạn, nội dung được cấp phép hoặc được phép tải. Bạn chịu trách nhiệm tuân thủ điều khoản nền tảng và luật bản quyền.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let data = null, tab = "video", link = "";
+
+const fmtSize = b => !b ? "" : b > 1e9 ? (b/1e9).toFixed(2)+" GB" : (b/1e6).toFixed(1)+" MB";
+const fmtDur = s => { if(!s) return ""; const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=Math.floor(s%60);
+  return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0"); };
+const say = (t, err) => { $("msg").textContent = t || ""; $("msg").className = err ? "err" : ""; };
+
+$("go").onclick = analyze;
+$("url").addEventListener("keydown", e => e.key === "Enter" && analyze());
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  tab = b.dataset.t;
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  render();
+});
+
+async function analyze() {
+  link = $("url").value.trim();
+  if (!link) return;
+  $("go").disabled = true; $("res").hidden = true; say("Đang phân tích…");
+  try {
+    const r = await fetch("/api/info", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url:link})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Lỗi không xác định");
+    data = j; say("");
+    $("thumb").src = j.thumbnail || "";
+    $("title").textContent = j.title || "(không tiêu đề)";
+    $("info").textContent = [j.uploader, fmtDur(j.duration)].filter(Boolean).join(" · ");
+    $("res").hidden = false; render();
+  } catch (e) { say(e.message, true); }
+  $("go").disabled = false;
+}
+
+function row(label, extra, params) {
+  const d = document.createElement("div"); d.className = "item";
+  d.innerHTML = `<span>${label}<small>${extra || ""}</small></span>`;
+  const b = document.createElement("button"); b.textContent = "Tải";
+  b.onclick = () => save(params, b);
+  d.appendChild(b); return d;
+}
+
+function render() {
+  const L = $("list"); L.innerHTML = "";
+  if (!data) return;
+  if (tab === "video") {
+    L.appendChild(row("Tốt nhất <span class='badge'>không watermark</span>", "tự động", {type:"video", format:"best"}));
+    data.videos.forEach(v => L.appendChild(row(
+      v.height + "p" + (v.fps > 30 ? v.fps : ""),
+      [v.ext, fmtSize(v.size), v.has_audio ? "" : "ghép âm thanh"].filter(Boolean).join(" · "),
+      {type:"video", format:v.format, ha:v.has_audio ? 1 : 0})));
+    if (!data.ffmpeg) L.insertAdjacentHTML("beforeend", "<p class='note'>Server chưa có ffmpeg: chỉ hiện định dạng có sẵn âm thanh. Cài ffmpeg để có độ phân giải cao nhất.</p>");
+  } else if (tab === "audio") {
+    L.appendChild(row("Âm thanh gốc", "m4a/webm, không chuyển đổi", {type:"audio", fmt:"native"}));
+    if (data.ffmpeg) L.appendChild(row("MP3 192 kbps", "chuyển đổi", {type:"audio", fmt:"mp3"}));
+  } else {
+    if (!data.subs.length) { L.innerHTML = "<p class='note'>Video này không có phụ đề.</p>"; return; }
+    const sel = document.createElement("select");
+    data.subs.forEach(s => { const o = document.createElement("option");
+      o.value = s.lang; o.textContent = s.lang + (s.auto ? " (tự động)" : ""); sel.appendChild(o); });
+    const d = document.createElement("div"); d.className = "item"; d.appendChild(sel);
+    const b = document.createElement("button"); b.textContent = data.ffmpeg ? "Tải .srt" : "Tải .vtt";
+    b.onclick = () => save({type:"sub", lang:sel.value}, b);
+    d.appendChild(b); L.appendChild(d);
+  }
+}
+
+function fileName(res) {
+  const cd = res.headers.get("Content-Disposition") || "";
+  let m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+  if (m) return decodeURIComponent(m[1]);
+  m = cd.match(/filename="?([^";]+)"?/i);
+  return m ? m[1] : "download";
+}
+
+async function save(params, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "Đang xử lý…";
+  say("Server đang tải và xử lý, vui lòng đợi…");
+  try {
+    const res = await fetch("/api/download?" + new URLSearchParams({url:link, ...params}));
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Tải thất bại"); }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = fileName(res);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    say("Hoàn tất.");
+  } catch (e) { say(e.message, true); }
+  btn.disabled = false; btn.textContent = old;
+}
+</script>
+</body>
+</html>
